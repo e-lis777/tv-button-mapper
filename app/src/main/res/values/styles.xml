@@ -1,0 +1,1 @@
+<resources><style name="AppTheme" parent="android:style/Theme.Material.NoActionBar"><item name="android:colorAccent">#79DFC9</item><item name="android:windowBackground">#0D141E</item><item name="android:colorBackground">#182331</item><item name="android:textColorPrimary">#FFFFFF</item><item name="android:textColorSecondary">#A7B7C8</item></style></resources>

@@ -1,0 +1,6 @@
+package org.tvbuttons.free;
+import android.app.*;import android.os.*;import android.widget.*;import android.graphics.Color;
+public class PanelActivity extends Activity {
+ public void onCreate(Bundle b){super.onCreate(b);LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(48,32,48,32);box.setBackgroundColor(0xff182331);String[] labels={"Домой","Назад","Пауза / воспроизведение","Громкость +","Громкость −","Закрыть"};String[] actions={"home","back","play","volup","voldown","none"};for(int n=0;n<labels.length;n++){String a=actions[n];Button button=new Button(this);button.setText(labels[n]);button.setTextColor(Color.WHITE);button.setAllCaps(false);button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff34465a));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,72);lp.bottomMargin=12;box.addView(button,lp);button.setOnClickListener(v->{if(a.equals("none")){finish();return;}if(AdbBridgeService.instance!=null&&AdbBridgeService.instance.action(a))finish();else Toast.makeText(this,"Управление пультом пока не подключено",Toast.LENGTH_LONG).show();});}setContentView(box);}
+ protected void onResume(){super.onResume();if(AdbBridgeService.instance!=null)AdbBridgeService.instance.visible(true);}protected void onPause(){if(AdbBridgeService.instance!=null)AdbBridgeService.instance.visible(false);super.onPause();}
+}
