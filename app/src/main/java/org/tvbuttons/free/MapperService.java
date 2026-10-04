@@ -1,17 +1,50 @@
 package org.tvbuttons.free;
-import android.accessibilityservice.*;import android.content.*;import android.os.*;import android.view.*;import android.view.accessibility.*;import android.widget.*;import android.media.*;import android.graphics.PixelFormat;import java.util.*;
-public class MapperService extends AccessibilityService {
- public static MapperService instance;Handler handler=new Handler(Looper.getMainLooper());android.content.SharedPreferences prefs;HashMap<Integer,Press> presses=new HashMap<>();HashMap<Integer,Runnable> pending=new HashMap<>();View overlay;
- static class Press {boolean longFired;Runnable timeout;}
- protected void onServiceConnected(){instance=this;prefs=getSharedPreferences("buttons",0);AccessibilityServiceInfo i=getServiceInfo();i.flags|=AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;setServiceInfo(i);}
- public void onAccessibilityEvent(AccessibilityEvent e){if(e.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&e.getPackageName()!=null)activePackage=e.getPackageName().toString();}public void onInterrupt(){}
- String action(int key,String type){return prefs.getString("map."+key+"."+type,"");}
- protected boolean onKeyEvent(KeyEvent e){if(prefs==null||!prefs.getBoolean("enabled",true))return false;if(overlay!=null)return false;if(getPackageName().equals(activePackage))return false;int key=e.getKeyCode();String single=action(key,"single"),dbl=action(key,"double"),lng=action(key,"long");if(single.isEmpty()&&dbl.isEmpty()&&lng.isEmpty())return false;
- if(e.getAction()==KeyEvent.ACTION_DOWN){if(e.getRepeatCount()==0){Press p=new Press();p.timeout=()->{if(!lng.isEmpty()){p.longFired=true;Runnable old=pending.remove(key);if(old!=null)handler.removeCallbacks(old);execute(lng);}};presses.put(key,p);if(!lng.isEmpty())handler.postDelayed(p.timeout,650);}return true;}
- if(e.getAction()==KeyEvent.ACTION_UP){Press p=presses.remove(key);if(p==null)return true;handler.removeCallbacks(p.timeout);if(p.longFired)return true;if(!dbl.isEmpty()){Runnable old=pending.remove(key);if(old!=null){handler.removeCallbacks(old);execute(dbl);}else{Runnable r=()->{pending.remove(key);execute(single);};pending.put(key,r);handler.postDelayed(r,300);}}else execute(single);return true;}return true;}
- String activePackage="";
- void execute(String a){AudioManager am=(AudioManager)getSystemService(AUDIO_SERVICE);switch(a){case "home":performGlobalAction(GLOBAL_ACTION_HOME);break;case "back":performGlobalAction(GLOBAL_ACTION_BACK);break;case "recents":performGlobalAction(GLOBAL_ACTION_RECENTS);break;case "volup":am.adjustStreamVolume(AudioManager.STREAM_MUSIC,AudioManager.ADJUST_RAISE,AudioManager.FLAG_SHOW_UI);break;case "voldown":am.adjustStreamVolume(AudioManager.STREAM_MUSIC,AudioManager.ADJUST_LOWER,AudioManager.FLAG_SHOW_UI);break;case "mute":am.adjustStreamVolume(AudioManager.STREAM_MUSIC,AudioManager.ADJUST_TOGGLE_MUTE,AudioManager.FLAG_SHOW_UI);break;case "play":am.dispatchMediaKeyEvent(new KeyEvent(0,KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));am.dispatchMediaKeyEvent(new KeyEvent(1,KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));break;case "panel":panel();break;default:if(a.startsWith("app:")){String pkg=a.substring(4);Intent i=getPackageManager().getLeanbackLaunchIntentForPackage(pkg);if(i==null)i=getPackageManager().getLaunchIntentForPackage(pkg);if(i!=null)try{startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(Exception ex){Toast.makeText(this,"Не удалось открыть приложение",0).show();}}}}
- public void panel(){if(overlay!=null){close();return;}LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(28,20,28,20);box.setBackgroundColor(0xff182331);TextView t=new TextView(this);t.setText("ТВ Кнопки");t.setTextSize(24);t.setTextColor(-1);box.addView(t);String[] labels={"Домой","Назад","Пауза / воспроизведение","Громкость +","Громкость −","Настроить кнопки","Закрыть"};String[] acts={"home","back","play","volup","voldown","app:org.tvbuttons.free","none"};for(int n=0;n<labels.length;n++){final String a=acts[n];Button b=new Button(this);b.setText(labels[n]);b.setAllCaps(false);box.addView(b,new LinearLayout.LayoutParams(-1,60));b.setOnClickListener(v->{close();execute(a);});}box.setFocusableInTouchMode(true);box.setOnKeyListener((v,k,e)->{if(k==KeyEvent.KEYCODE_BACK){if(e.getAction()==1)close();return true;}return false;});WindowManager.LayoutParams w=new WindowManager.LayoutParams(420,-2,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_DIM_BEHIND,PixelFormat.TRANSLUCENT);w.gravity=Gravity.CENTER;w.dimAmount=.5f;try{((WindowManager)getSystemService(WINDOW_SERVICE)).addView(box,w);overlay=box;box.getChildAt(1).requestFocus();}catch(Exception ex){Toast.makeText(this,"Не удалось открыть панель",0).show();}}
- void close(){if(overlay!=null){((WindowManager)getSystemService(WINDOW_SERVICE)).removeView(overlay);overlay=null;}}
- public void onDestroy(){close();for(Press p:presses.values())handler.removeCallbacks(p.timeout);for(Runnable r:pending.values())handler.removeCallbacks(r);instance=null;super.onDestroy();}
+
+import android.accessibilityservice.*;
+import android.content.*;
+import android.os.*;
+import android.view.*;
+import android.view.accessibility.*;
+
+public class MapperService extends AccessibilityService implements SharedPreferences.OnSharedPreferenceChangeListener {
+ public static volatile MapperService instance;
+ final Handler handler=new Handler(Looper.getMainLooper());
+ SharedPreferences prefs;KeyPresses presses;AccessibilityActions actions;
+ public static volatile int lastKey=-1;
+ protected void onServiceConnected(){
+  instance=this;prefs=getSharedPreferences("buttons",0);actions=new AccessibilityActions(this);
+  presses=new KeyPresses(new KeyPresses.Scheduler(){public void post(Runnable r,long delay){handler.postDelayed(r,delay);}public void cancel(Runnable r){handler.removeCallbacks(r);}},this::execute);
+  prefs.registerOnSharedPreferenceChangeListener(this);updateFilter();
+ }
+ void updateFilter(){AccessibilityServiceInfo info=getServiceInfo();if(info==null)return;
+  if(!ControlMode.adb(this)&&ControlMode.enabled(this)){info.flags|=AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;info.eventTypes=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;}
+  else {info.flags&=~AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;info.eventTypes=0;}
+  setServiceInfo(info);
+ }
+ public void onAccessibilityEvent(AccessibilityEvent e){
+  if(actions==null||ControlMode.adb(this)||!ControlMode.enabled(this))return;
+  if(e.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&e.getPackageName()!=null)actions.window(e.getPackageName().toString());
+ }
+ public void onInterrupt(){cancel();}
+ String assignment(int key,String type){return prefs.getString("map."+key+"."+type,"");}
+ protected boolean onKeyEvent(KeyEvent e){
+  if(prefs==null||ControlMode.adb(this)||!ControlMode.enabled(this))return false;
+  lastKey=e.getKeyCode();
+  if(MainActivity.screenActive){cancel();return false;}
+  int key=e.getKeyCode();if(key==KeyEvent.KEYCODE_POWER)return false;
+  if(actions.mouseEvent(e))return true;
+  if(e.getAction()==KeyEvent.ACTION_UP){if(!presses.owns(key))return false;presses.up(key);return true;}
+  if(e.getAction()!=KeyEvent.ACTION_DOWN)return false;
+  if(presses.owns(key))return true;
+  String single=assignment(key,"single"),dbl=assignment(key,"double"),lng=assignment(key,"long");
+  if(single.isEmpty()&&dbl.isEmpty()&&lng.isEmpty())return false;
+  if(e.getRepeatCount()!=0)return false;
+  boolean supported=false;for(String a:new String[]{single,dbl,lng})if(!a.isEmpty()&&actions.limitation(a).isEmpty())supported=true;
+  if(!supported){actions.toast("Назначение этой кнопки требует режима ADB");return false;}
+  presses.down(key,single,dbl,lng);return true;
+ }
+ void execute(String action){if(actions!=null&&!ControlMode.adb(this)&&ControlMode.enabled(this))actions.execute(action);}
+ void cancel(){if(presses!=null)presses.cancel();}
+ public void onSharedPreferenceChanged(SharedPreferences p,String key){cancel();if(key.equals("control_mode")||key.equals("enabled")){actions.close();actions=new AccessibilityActions(this);updateFilter();}}
+ public void onDestroy(){cancel();if(actions!=null)actions.close();if(prefs!=null)prefs.unregisterOnSharedPreferenceChangeListener(this);if(instance==this)instance=null;super.onDestroy();}
 }

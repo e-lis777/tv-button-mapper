@@ -2,7 +2,7 @@ package org.tvbuttons.free;
 import android.net.*;import android.os.*;import android.view.*;import org.json.*;import java.io.*;import java.lang.reflect.*;import java.nio.*;import java.util.*;import java.util.concurrent.*;
 /** Runs as ADB shell, never invokes su. One authenticated app UID may connect. */
 public final class ShellBridge {
- static final String SOCKET="tvbuttons.shell.bridge.v2";
+ static final String SOCKET="tvbuttons.shell.bridge.v3";
  final BridgeActions advanced;
  final int appUid; final Map<Integer,Integer> keys=new HashMap<>(); final Map<Integer,Long> downs=new HashMap<>();
  final ScheduledExecutorService timer=Executors.newSingleThreadScheduledExecutor();
